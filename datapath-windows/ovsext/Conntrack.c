@@ -648,6 +648,10 @@ OvsReverseIcmpType(UINT8 type)
         return ICMP4_INFO_REPLY;
     case ICMP4_INFO_REPLY:
         return ICMP4_INFO_REQUEST;
+    case ICMP6_ECHO_REQUEST:
+        return ICMP6_ECHO_REPLY;
+    case ICMP6_ECHO_REPLY:
+        return ICMP6_ECHO_REQUEST;
     default:
         return 0;
     }
@@ -1018,10 +1022,17 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
             return NDIS_STATUS_RESOURCES;
         }
         /* If no matching entry was found, create one and add New state */
-        entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto,
-                                 layers, &ctx,
-                                 key, natInfo, commit, currentTime,
-                                 &entryCreated);
+        if (key->l2.dlType == htons(ETH_TYPE_IPV6)) {
+            entry = OvsCtEntryCreate(fwdCtx, key->ipv6Key.nwProto,
+                                     layers, &ctx,
+                                     key, natInfo, commit, currentTime,
+                                     &entryCreated);
+        } else {
+            entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto,
+                                     layers, &ctx,
+                                     key, natInfo, commit, currentTime,
+                                     &entryCreated);
+        }
     }
 
     if (entry == NULL) {
