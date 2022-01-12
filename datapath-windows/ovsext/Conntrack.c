@@ -340,6 +340,7 @@ OvsCtEntryCreate(OvsForwardingContext *fwdCtx,
         }
         break;
     }
+    case IPPROTO_ICMPV6:
     case IPPROTO_ICMP:
     {
         ICMPHdr storage;
@@ -427,6 +428,7 @@ OvsCtUpdateEntry(OVS_CT_ENTRY* entry,
         NdisReleaseSpinLock(&(entry->lock));
         break;
     }
+
     case IPPROTO_ICMP:
     {
         NdisAcquireSpinLock(&(entry->lock));
@@ -434,6 +436,15 @@ OvsCtUpdateEntry(OVS_CT_ENTRY* entry,
         NdisReleaseSpinLock(&(entry->lock));
         break;
     }
+
+    case IPPROTO_ICMPV6:
+    {
+        NdisAcquireSpinLock(&(entry->lock));
+        status = OvsConntrackUpdateIcmpEntry(entry, reply, now);
+        NdisReleaseSpinLock(&(entry->lock));
+        break;
+    }
+
     case IPPROTO_UDP:
     {
         NdisAcquireSpinLock(&(entry->lock));
@@ -527,6 +538,22 @@ OvsDetectCtPacket(OvsForwardingContext *fwdCtx,
         }
         return NDIS_STATUS_NOT_SUPPORTED;
     case ETH_TYPE_IPV6:
+        if (key->ipv6Key.nwProto == IPPROTO_ICMPV6
+            || key->ipv6Key.nwProto == IPPROTO_TCP) {
+            /** TODO fragment **/
+
+            /** Extract flow key from packet and assign it to
+             * returned parameter. **/
+            status =  OvsExtractFlow(fwdCtx->curNbl, fwdCtx->srcVportNo,
+                                     &newFlowKey, &fwdCtx->layers,
+                                     fwdCtx->tunKey.dst != 0 ? &fwdCtx->tunKey : NULL);
+            if (status != NDIS_STATUS_SUCCESS) {
+                OVS_LOG_ERROR("Extract flow for ipv6 failed Nbl %p", fwdCtx->curNbl);
+                return status;
+            }
+            *key = newFlowKey;
+            return NDIS_STATUS_SUCCESS;
+        }
         return NDIS_STATUS_NOT_SUPPORTED;
     }
 
@@ -690,7 +717,25 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
 
         ctx->key.src.port = flowKey->ipv6Key.l4.tpSrc;
         ctx->key.dst.port = flowKey->ipv6Key.l4.tpDst;
-        /* XXX Handle ICMPv6 errors*/
+        if (flowKey->ipv6Key.nwProto == IPPROTO_ICMPV6) {
+            ICMPHdr icmpStorage;
+            const ICMPHdr *icmp;
+            icmp = OvsGetIcmp(curNbl, l4Offset, &icmpStorage);
+            ASSERT(icmp);
+
+            switch (icmp->type) {
+                case ICMP6_ECHO_REQUEST:
+                case ICMP6_ECHO_REPLY: {
+                    ctx->key.dst.icmp_id = icmp->fields.echo.id;
+                    ctx->key.src.icmp_id = icmp->fields.echo.id;
+                    ctx->key.src.icmp_type = icmp->type;
+                    ctx->key.dst.icmp_type = OvsReverseIcmpType(icmp->type);
+                    break;
+                }
+                default:
+                    ctx->related = FALSE;
+            }
+        }
     } else {
         return NDIS_STATUS_INVALID_PACKET;
     }
