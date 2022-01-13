@@ -1576,15 +1576,15 @@ MapProtoTupleToNl(PNL_BUFFER nlBuf, OVS_CT_KEY *key)
                 goto done;
             }
         } else if (key->nw_proto == IPPROTO_ICMPV6) {
-            if (!NlMsgPutTailU16(nlBuf, CTA_PROTO_ICMPV6_ID, 0)) {
+            if (!NlMsgPutTailU16(nlBuf, CTA_PROTO_ICMPV6_ID, htons(key->src.icmp_id))) {
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
-            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_TYPE, 0)) {
+            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_TYPE, htons(key->src.icmp_type))) {
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
-            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_CODE, 0)) {
+            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_CODE, htons(key->src.icmp_code))) {
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
