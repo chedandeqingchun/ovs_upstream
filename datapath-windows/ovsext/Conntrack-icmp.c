@@ -67,7 +67,8 @@ OvsConntrackValidateIcmpPacket(const ICMPHdr *icmp)
 
     return icmp->type == ICMP4_ECHO_REQUEST
            || icmp->type == ICMP4_INFO_REQUEST
-           || icmp->type == ICMP4_TIMESTAMP_REQUEST;
+           || icmp->type == ICMP4_TIMESTAMP_REQUEST
+           || icmp->type == ICMP6_ECHO_REQUEST;
 }
 
 OVS_CT_ENTRY *
