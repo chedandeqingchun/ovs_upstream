@@ -712,7 +712,7 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
 
         if (tcp->doff * 4 >= sizeof *tcp) {
             NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
-            *tcpPayloadLen = ipv6Hdr->payload_len - TCP_HDR_LEN(tcp)
+            *tcpPayloadLen = (ipv6Hdr->payload_len - TCP_HDR_LEN(tcp));
             return storage;
         }
     } else {//ipv4 packet
