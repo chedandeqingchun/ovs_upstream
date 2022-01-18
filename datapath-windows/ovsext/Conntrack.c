@@ -632,6 +632,16 @@ OvsCtLookup(OvsConntrackKeyLookupCtx *ctx)
     return found;
 }
 
+static int
+IsValidIpv6ExtHdr(uint8_t nexthdr) {
+    return ( (nexthdr == NEXTHDR_HOP)  ||
+             (nexthdr == NEXTHDR_ROUTING)  ||
+             (nexthdr == NEXTHDR_FRAGMENT) ||
+             (nexthdr == NEXTHDR_AUTH) ||
+             (nexthdr == NEXTHDR_NONE) ||
+             (nexthdr == NEXTHDR_DEST) );
+}
+
 static TCPHdr*
 SkipIpv6Header(IPv6Hdr *ipv6Hdr)
 {
@@ -676,6 +686,48 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
     tcpHdr = (TCPHdr *)localIpv6Hdr;
 
     return tcpHdr;
+}
+
+static const TCPHdr*
+OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
+                OVS_PACKET_HDR_INFO *layers,
+                VOID *storage,
+                UINT32 *tcpPayloadLen)
+{
+    IPHdr *ipHdr;
+    IPv6Hdr *ipv6Hdr;
+    TCPHdr *tcp;
+    VOID *dest = storage;
+
+    if ((layers->isIPv6 & 0x4000) == 0x4000) {//ipv6 packet
+        ipv6Hdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
+                                    layers->l4Offset + sizeof(TCPHdr),
+                                    NULL, 1, 0);
+        if (ipv6Hdr == NULL) {
+            return NULL;
+        }
+
+        ipv6Hdr = (IPv6Hdr *)((PCHAR)ipv6Hdr + layers->l3Offset);
+        tcp = SkipIpv6Header(ipv6Hdr);
+    } else {//ipv4 packet
+        ipHdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
+                                  layers->l4Offset + sizeof(TCPHdr),
+                                  NULL, 1 /*no align*/, 0);
+        if (ipHdr == NULL) {
+            return NULL;
+        }
+
+        ipHdr = (IPHdr *)((PCHAR)ipHdr + layers->l3Offset);
+        tcp = (TCPHdr *)((PCHAR)ipHdr + ipHdr->ihl * 4);
+    }
+
+    if (tcp->doff * 4 >= sizeof *tcp) {
+        NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
+        *tcpPayloadLen = TCP_DATA_LENGTH(ipHdr, tcp);
+        return storage;
+    }
+
+    return NULL;
 }
 
 static UINT8
@@ -786,7 +838,7 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
                 case ICMP6_TIME_EXCEEDED:
                 case ICMP6_PARAM_PROB:
                 case ICMP6_PACKET_TOO_BIG:
-                    ctx->related = True;
+                    ctx->related = TRUE;
                     break;
                 default:
                     ctx->related = FALSE;
