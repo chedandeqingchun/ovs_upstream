@@ -646,17 +646,17 @@ static TCPHdr*
 SkipIpv6Header(IPv6Hdr *ipv6Hdr)
 {
     TCPHdr *tcpHdr;
-    IPv6Hdr  *localIpv6Hdr;
-    struct IPv6OptHdr *optHeader;
+    PCHAR localIpv6Hdr;
+    IPv6OptHdr *optHeader;
     uint8_t nextHdr = ipv6Hdr->nexthdr;
 
-    localIpv6Hdr = ipv6Hdr + sizeof(IPv6Hdr);
+    localIpv6Hdr = (((PCHAR)ipv6Hdr) + sizeof(IPv6Hdr));
     while (IsValidIpv6ExtHdr(nextHdr)) {
         if (nextHdr == NEXTHDR_NONE) {
             break;
         }
 
-        optHeader = ((PCHAR)localIpv6Hdr + sizeof(struct IPv6OptHdr));
+        optHeader = (IPv6OptHdr *)(localIpv6Hdr + sizeof(IPv6OptHdr));
         if (!optHeader) {/** Not valid packet. **/
             break;
         }
@@ -664,7 +664,7 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
         if (nextHdr == NEXTHDR_FRAGMENT) {
             uint16_t *fp;
 
-            fp = (uint16_t *)((PCHAR)localIpv6Hdr + offsetof(IPv6FragHdr, offlg));
+            fp = (uint16_t *)(localIpv6Hdr + offsetof(IPv6FragHdr, offlg));
             if (fp == NULL) {
                 break;
             }
@@ -673,11 +673,11 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
                 break;
             }
 
-            localIpv6Hdr = ((PCHAR)localIpv6Hdr + 8);
+            localIpv6Hdr = (localIpv6Hdr + 8);
         } else if (nextHdr == NEXTHDR_AUTH) {
-            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 2) << 2));
+            localIpv6Hdr = (localIpv6Hdr + ((optHeader->hdrLen + 2) << 2));
         } else {
-            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 1) << 3));
+            localIpv6Hdr = (localIpv6Hdr + ((optHeader->hdrLen + 1) << 3));
         }
 
         nextHdr = optHeader->nextHdr;
