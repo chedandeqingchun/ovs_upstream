@@ -736,6 +736,12 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
                     ctx->key.dst.icmp_type = OvsReverseIcmpType(icmp->type);
                     break;
                 }
+                case ICMP6_DST_UNREACH:
+                case ICMP6_TIME_EXCEEDED:
+                case ICMP6_PARAM_PROB:
+                case ICMP6_PACKET_TOO_BIG:
+                    ctx->related = True;
+                    break;
                 default:
                     ctx->related = FALSE;
             }

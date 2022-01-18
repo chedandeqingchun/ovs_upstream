@@ -300,6 +300,11 @@ typedef struct IPv6FragHdr {
     UINT32 ident;
 } IPv6FragHdr;
 
+typedef struct IPv6OptHdr {
+    UINT8 nextHdr;
+    UINT8 hdrLen;
+};
+
 typedef struct IPv6NdOptHdr {
     UINT8 type;
     UINT8 len;

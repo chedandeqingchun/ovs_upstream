@@ -167,6 +167,81 @@ OvsConntrackUpdateExpiration(OVS_CT_ENTRY *ctEntry,
     ctEntry->expiration = now + interval;
 }
 
+/*
+ *	NextHeader field of IPv6 header
+ */
+
+#define NEXTHDR_HOP		0	/* Hop-by-hop option header. */
+#define NEXTHDR_TCP		6	/* TCP segment. */
+#define NEXTHDR_UDP		17	/* UDP message. */
+#define NEXTHDR_IPV6		41	/* IPv6 in IPv6 */
+#define NEXTHDR_ROUTING		43	/* Routing header. */
+#define NEXTHDR_FRAGMENT	44	/* Fragmentation/reassembly header. */
+#define NEXTHDR_ESP		50	/* Encapsulating security payload. */
+#define NEXTHDR_AUTH		51	/* Authentication header. */
+#define NEXTHDR_ICMP		58	/* ICMP for IPv6. */
+#define NEXTHDR_NONE		59	/* No next header */
+#define NEXTHDR_DEST		60	/* Destination options header. */
+#define NEXTHDR_MOBILITY	135	/* Mobility header. */
+
+#define NEXTHDR_MAX		255
+
+
+int IsValidIpv6ExtHdr(uint8_t nexthdr) {
+    return ( (nexthdr == NEXTHDR_HOP)  ||
+             (nexthdr == NEXTHDR_ROUTING)  ||
+             (nexthdr == NEXTHDR_FRAGMENT) ||
+             (nexthdr == NEXTHDR_AUTH) ||
+             (nexthdr == NEXTHDR_NONE) ||
+             (nexthdr == NEXTHDR_DEST) );
+}
+
+static TCPHdr*
+SkipIpv6Header(IPv6Hdr *ipv6Hdr)
+{
+    TCPHdr *tcpHdr;
+    IPv6Hdr  *localIpv6Hdr;
+    struct IPv6OptHdr *optHeader;
+    uint8_t nextHdr = ipv6Hdr->nexthdr;
+
+    localIpv6Hdr = ipv6Hdr + sizeof(IPv6Hdr);
+    while (IsValidIpv6ExtHdr(nextHdr)) {
+        if (nextHdr == NEXTHDR_NONE) {
+            break;
+        }
+
+        optHeader = ((PCHAR)localIpv6Hdr + sizeof(struct IPv6OptHdr));
+        if (!optHeader) {/** Not valid packet. **/
+            break;
+        }
+
+        if (nextHdr == NEXTHDR_FRAGMENT) {
+            uint16_t  frag_off, *fp;
+
+            fp = (uint16_t *)((PCHAR)localIpv6Hdr + offsetof(IPv6FragHdr, offlg));
+            if (fp == NULL) {
+                break;
+            }
+
+            if (ntohs(*fp) & ~0x7) {
+                break;
+            }
+
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + 8);
+        } else if (nextHdr == NEXTHDR_AUTH) {
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + (optHeader->hdrLen + 2) << 2);
+        } else {
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + (optHeader->hdrLen + 1) << 3);
+        }
+
+        nextHdr = optHeader->nextHdr;
+    }
+
+    tcpHdr = (TCPHdr *)localIpv6Hdr;
+
+    return tcpHdr;
+}
+
 static const TCPHdr*
 OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
                 OVS_PACKET_HDR_INFO *layers,
@@ -174,18 +249,32 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
                 UINT32 *tcpPayloadLen)
 {
     IPHdr *ipHdr;
+    IPv6Hdr *ipv6Hdr;
     TCPHdr *tcp;
     VOID *dest = storage;
 
-    ipHdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
-                              layers->l4Offset + sizeof(TCPHdr),
-                              NULL, 1 /*no align*/, 0);
-    if (ipHdr == NULL) {
-        return NULL;
+    if ((layers->isIPv6 & 0x4000) == 0x4000) {//ipv6 packet
+        ipv6Hdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
+                                    layers->l4Offset + sizeof(TCPHdr),
+                                    NULL, 1, 0);
+        if (ipv6Hdr == NULL) {
+            return NULL;
+        }
+
+        ipv6Hdr = (IPv6Hdr *)((PCHAR)ipv6Hdr + layers->l3Offset);
+        tcp = SkipIpv6Header(ipv6Hdr);
+    } else {//ipv4 packet
+        ipHdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
+                                  layers->l4Offset + sizeof(TCPHdr),
+                                  NULL, 1 /*no align*/, 0);
+        if (ipHdr == NULL) {
+            return NULL;
+        }
+
+        ipHdr = (IPHdr *)((PCHAR)ipHdr + layers->l3Offset);
+        tcp = (TCPHdr *)((PCHAR)ipHdr + ipHdr->ihl * 4);
     }
 
-    ipHdr = (IPHdr *)((PCHAR)ipHdr + layers->l3Offset);
-    tcp = (TCPHdr *)((PCHAR)ipHdr + ipHdr->ihl * 4);
     if (tcp->doff * 4 >= sizeof *tcp) {
         NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
         *tcpPayloadLen = TCP_DATA_LENGTH(ipHdr, tcp);
