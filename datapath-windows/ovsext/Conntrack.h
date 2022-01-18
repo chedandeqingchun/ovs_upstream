@@ -187,7 +187,7 @@ OvsConntrackUpdateExpiration(OVS_CT_ENTRY *ctEntry,
 
 static TCPHdr* SkipIpv6Header(IPv6Hdr *ipv6Hdr);
 static int IsValidIpv6ExtHdr(uint8_t nexthdr);
-static const TCPHdr* OvsGetTcpHeader(PNET_BUFFER_LIST nbl, OVS_PACKET_HDR_INFO *layers,
+const TCPHdr* OvsGetTcpHeader(PNET_BUFFER_LIST nbl, OVS_PACKET_HDR_INFO *layers,
                                      VOID *storage, UINT32 *tcpPayloadLen);
 
 VOID OvsCleanupConntrack(VOID);

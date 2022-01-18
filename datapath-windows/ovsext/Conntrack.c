@@ -662,7 +662,7 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
         }
 
         if (nextHdr == NEXTHDR_FRAGMENT) {
-            uint16_t  frag_off, *fp;
+            uint16_t *fp;
 
             fp = (uint16_t *)((PCHAR)localIpv6Hdr + offsetof(IPv6FragHdr, offlg));
             if (fp == NULL) {
@@ -688,7 +688,7 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
     return tcpHdr;
 }
 
-static const TCPHdr*
+const TCPHdr*
 OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
                 OVS_PACKET_HDR_INFO *layers,
                 VOID *storage,
@@ -1684,11 +1684,11 @@ MapProtoTupleToNl(PNL_BUFFER nlBuf, OVS_CT_KEY *key)
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
-            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_TYPE, htons(key->src.icmp_type))) {
+            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_TYPE, key->src.icmp_type)) {
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
-            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_CODE, htons(key->src.icmp_code))) {
+            if (!NlMsgPutTailU8(nlBuf, CTA_PROTO_ICMPV6_CODE, key->src.icmp_code)) {
                 status = NDIS_STATUS_FAILURE;
                 goto done;
             }
