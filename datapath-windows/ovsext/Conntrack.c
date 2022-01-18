@@ -652,6 +652,7 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
 
     localIpv6Hdr = (((PCHAR)ipv6Hdr) + sizeof(IPv6Hdr));
     while (IsValidIpv6ExtHdr(nextHdr)) {
+        uint16_t hdrLen = 0;
         if (nextHdr == NEXTHDR_NONE) {
             break;
         }
@@ -675,9 +676,11 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
 
             localIpv6Hdr = (localIpv6Hdr + 8);
         } else if (nextHdr == NEXTHDR_AUTH) {
-            localIpv6Hdr = (localIpv6Hdr + ((optHeader->hdrLen + 2) << 2));
+            hdrLen = ((optHeader->hdrLen + 2) << 2);
+            localIpv6Hdr = (localIpv6Hdr + hdrLen);
         } else {
-            localIpv6Hdr = (localIpv6Hdr + ((optHeader->hdrLen + 1) << 3));
+            hdrLen = ((optHeader->hdrLen + 1) << 3);
+            localIpv6Hdr = (localIpv6Hdr + hdrLen);
         }
 
         nextHdr = optHeader->nextHdr;
