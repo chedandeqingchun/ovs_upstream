@@ -632,6 +632,52 @@ OvsCtLookup(OvsConntrackKeyLookupCtx *ctx)
     return found;
 }
 
+static TCPHdr*
+SkipIpv6Header(IPv6Hdr *ipv6Hdr)
+{
+    TCPHdr *tcpHdr;
+    IPv6Hdr  *localIpv6Hdr;
+    struct IPv6OptHdr *optHeader;
+    uint8_t nextHdr = ipv6Hdr->nexthdr;
+
+    localIpv6Hdr = ipv6Hdr + sizeof(IPv6Hdr);
+    while (IsValidIpv6ExtHdr(nextHdr)) {
+        if (nextHdr == NEXTHDR_NONE) {
+            break;
+        }
+
+        optHeader = ((PCHAR)localIpv6Hdr + sizeof(struct IPv6OptHdr));
+        if (!optHeader) {/** Not valid packet. **/
+            break;
+        }
+
+        if (nextHdr == NEXTHDR_FRAGMENT) {
+            uint16_t  frag_off, *fp;
+
+            fp = (uint16_t *)((PCHAR)localIpv6Hdr + offsetof(IPv6FragHdr, offlg));
+            if (fp == NULL) {
+                break;
+            }
+
+            if (ntohs(*fp) & ~0x7) {
+                break;
+            }
+
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + 8);
+        } else if (nextHdr == NEXTHDR_AUTH) {
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 2) << 2));
+        } else {
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 1) << 3));
+        }
+
+        nextHdr = optHeader->nextHdr;
+    }
+
+    tcpHdr = (TCPHdr *)localIpv6Hdr;
+
+    return tcpHdr;
+}
+
 static UINT8
 OvsReverseIcmpType(UINT8 type)
 {

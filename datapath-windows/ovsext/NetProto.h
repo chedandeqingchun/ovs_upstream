@@ -303,7 +303,7 @@ typedef struct IPv6FragHdr {
 typedef struct IPv6OptHdr {
     UINT8 nextHdr;
     UINT8 hdrLen;
-};
+} IPv6OptHdr;
 
 typedef struct IPv6NdOptHdr {
     UINT8 type;
