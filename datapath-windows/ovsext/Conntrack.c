@@ -709,6 +709,12 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
 
         ipv6Hdr = (IPv6Hdr *)((PCHAR)ipv6Hdr + layers->l3Offset);
         tcp = SkipIpv6Header(ipv6Hdr);
+
+        if (tcp->doff * 4 >= sizeof *tcp) {
+            NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
+            *tcpPayloadLen = ipv6Hdr->payload_len - TCP_HDR_LEN(tcp)
+            return storage;
+        }
     } else {//ipv4 packet
         ipHdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
                                   layers->l4Offset + sizeof(TCPHdr),
@@ -719,14 +725,13 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
 
         ipHdr = (IPHdr *)((PCHAR)ipHdr + layers->l3Offset);
         tcp = (TCPHdr *)((PCHAR)ipHdr + ipHdr->ihl * 4);
-    }
 
-    if (tcp->doff * 4 >= sizeof *tcp) {
-        NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
-        *tcpPayloadLen = TCP_DATA_LENGTH(ipHdr, tcp);
-        return storage;
+        if (tcp->doff * 4 >= sizeof *tcp) {
+            NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
+            *tcpPayloadLen = TCP_DATA_LENGTH(ipHdr, tcp);
+            return storage;
+        }
     }
-
     return NULL;
 }
 
