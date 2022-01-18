@@ -229,9 +229,9 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
 
             localIpv6Hdr = ((PCHAR)localIpv6Hdr + 8);
         } else if (nextHdr == NEXTHDR_AUTH) {
-            localIpv6Hdr = ((PCHAR)localIpv6Hdr + (optHeader->hdrLen + 2) << 2);
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 2) << 2));
         } else {
-            localIpv6Hdr = ((PCHAR)localIpv6Hdr + (optHeader->hdrLen + 1) << 3);
+            localIpv6Hdr = ((PCHAR)localIpv6Hdr + ((optHeader->hdrLen + 1) << 3));
         }
 
         nextHdr = optHeader->nextHdr;
