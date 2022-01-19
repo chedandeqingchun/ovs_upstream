@@ -707,7 +707,7 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
     OVS_LOG_TRACE("Enter OvsGetTcpHeader, layer info is %x",
                   layers->isIPv6);
 
-    if ((layers->isIPv6 & 0x4000) == 0x4000) {//ipv6 packet
+    if (layers->isIPv6) {//ipv6 packet
         OVS_LOG_TRACE("Is ipv6 packet");
         ipv6Hdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
                                     layers->l4Offset + sizeof(TCPHdr),
