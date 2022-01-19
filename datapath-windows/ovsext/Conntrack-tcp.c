@@ -209,9 +209,13 @@ OvsConntrackUpdateTcpEntry(OVS_CT_ENTRY* conn_,
     uint32_t ack, end, seq, orig_seq;
     int ackskew;
 
+    OVS_LOG_TRACE("+OvsConntrackUpdateTcpEntry");
+
     if (OvsCtInvalidTcpFlags(tcp_flags)) {
         return CT_UPDATE_INVALID;
     }
+
+    OVS_LOG_TRACE("Valid ct flags.");
 
     if ((tcp_flags & (TCP_SYN|TCP_ACK)) == TCP_SYN) {
         if (dst->state >= CT_DPIF_TCPS_FIN_WAIT_2

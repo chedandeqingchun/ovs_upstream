@@ -914,8 +914,16 @@ OvsProcessConntrackEntry(OvsForwardingContext *fwdCtx,
     } else {
         CT_UPDATE_RES result;
         UINT32 bucketIdx;
-        result = OvsCtUpdateEntry(entry, curNbl, key->ipKey.nwProto, layers,
-                                  ctx->reply, currentTime);
+
+        if (layers->isIPv6) {
+            OVS_LOG_TRACE("+OvsCtUpdateEntry, protocol is %d.", key->ipv6Key.nwProto);
+            result = OvsCtUpdateEntry(entry, curNbl, key->ipv6Key.nwProto, layers,
+                                      ctx->reply, currentTime);
+        } else {
+            result = OvsCtUpdateEntry(entry, curNbl, key->ipKey.nwProto, layers,
+                                      ctx->reply, currentTime);
+        }
+
         switch (result) {
         case CT_UPDATE_VALID:
             state |= OVS_CS_F_ESTABLISHED;
