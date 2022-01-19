@@ -650,6 +650,8 @@ SkipIpv6Header(IPv6Hdr *ipv6Hdr)
     IPv6OptHdr *optHeader;
     uint8_t nextHdr = ipv6Hdr->nexthdr;
 
+    OVS_LOG_TRACE("Enter SkipIpv6Header");
+
     localIpv6Hdr = (((PCHAR)ipv6Hdr) + sizeof(IPv6Hdr));
     while (IsValidIpv6ExtHdr(nextHdr)) {
         uint16_t hdrLen = 0;
@@ -702,7 +704,11 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
     TCPHdr *tcp;
     VOID *dest = storage;
 
+    OVS_LOG_TRACE("Enter OvsGetTcpHeader, layer info is %x",
+                  layers->isIPv6);
+
     if ((layers->isIPv6 & 0x4000) == 0x4000) {//ipv6 packet
+        OVS_LOG_TRACE("Is ipv6 packet");
         ipv6Hdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
                                     layers->l4Offset + sizeof(TCPHdr),
                                     NULL, 1, 0);
