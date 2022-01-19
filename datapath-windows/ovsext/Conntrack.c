@@ -703,6 +703,7 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
     IPv6Hdr *ipv6Hdr;
     TCPHdr *tcp;
     VOID *dest = storage;
+    uint16_t ipv6ExtLength = 0;
 
     OVS_LOG_TRACE("Enter OvsGetTcpHeader, layer info is %x",
                   layers->isIPv6);
@@ -716,12 +717,12 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
             return NULL;
         }
 
-        ipv6Hdr = (IPv6Hdr *)((PCHAR)ipv6Hdr + layers->l3Offset);
-        tcp = SkipIpv6Header(ipv6Hdr);
-
+        tcp = (TCPHdr *)((PCHAR)ipv6Hdr + layers->l4Offset);
         if (tcp->doff * 4 >= sizeof *tcp) {
             NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
-            *tcpPayloadLen = (ipv6Hdr->payload_len - TCP_HDR_LEN(tcp));
+            ipv6ExtLength = layers->l4Offset - layers->l3Offset - sizeof(IPv6Hdr);
+            *tcpPayloadLen = (ipv6Hdr->payload_len - ipv6ExtLength - TCP_HDR_LEN(tcp));
+            OVS_LOG_TRACE("Tcp v6 payload length is %d.", *tcpPayloadLen);
             return storage;
         }
     } else {//ipv4 packet
