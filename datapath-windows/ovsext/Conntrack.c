@@ -188,6 +188,13 @@ OvsCtSetZoneLimit(int zone, ULONG value) {
     NdisReleaseSpinLock(&ovsCtZoneLock);
 }
 
+static uint32_t
+ct_endpoint_hash_add(uint32_t hash, const struct ct_endpoint *ep)
+{
+    BUILD_ASSERT_DECL(sizeof *ep % 4 == 0);
+    return OvsJhashBytes((UINT32 *)ep, sizeof *ep, hash);
+}
+
 /*
  *----------------------------------------------------------------------------
  * OvsCtHashKey
@@ -198,8 +205,11 @@ UINT32
 OvsCtHashKey(const OVS_CT_KEY *key)
 {
     UINT32 hsrc, hdst, hash;
-    hsrc = key->src.addr.ipv4 | ntohl(key->src.port);
-    hdst = key->dst.addr.ipv4 | ntohl(key->dst.port);
+    hsrc = ntohl(key->src.port);
+    hdst = ntohl(key->dst.port);
+    hsrc = ct_endpoint_hash_add(hsrc, &key->src);
+    hdst = ct_endpoint_hash_add(hdst, &key->dst);
+
     hash = hsrc ^ hdst; /* TO identify reverse traffic */
     hash = hash | (key->zone + key->nw_proto);
     hash = OvsJhashWords((uint32_t*) &hash, 1, hash);
@@ -1209,6 +1219,14 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
 
     /* Add original tuple information to flow Key */
     if (entry->key.dl_type == ntohs(ETH_TYPE_IPV4)) {
+        if (parent != NULL) {
+            OVS_ACQUIRE_SPIN_LOCK(&(parent->lock), irql);
+            OvsCtUpdateTuple(key, &parent->key);
+            OVS_RELEASE_SPIN_LOCK(&(parent->lock), irql);
+        } else {
+            OvsCtUpdateTuple(key, &entry->key);
+        }
+    } else if (entry->key.dl_type == ntohs(ETH_TYPE_IPV6)) {
         if (parent != NULL) {
             OVS_ACQUIRE_SPIN_LOCK(&(parent->lock), irql);
             OvsCtUpdateTuple(key, &parent->key);
