@@ -819,8 +819,8 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
                     return NDIS_STATUS_INVALID_PACKET;
                 }
                 /* Separate ICMP connection: identified using id */
-                ctx->key.dst.icmp_id = icmp->fields.echo.id;
-                ctx->key.src.icmp_id = icmp->fields.echo.id;
+                ctx->key.dst.icmp_id = ntohs(icmp->fields.echo.id);
+                ctx->key.src.icmp_id = ntohs(icmp->fields.echo.id);
                 ctx->key.src.icmp_type = icmp->type;
                 ctx->key.dst.icmp_type = OvsReverseIcmpType(icmp->type);
                 break;
@@ -853,8 +853,8 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
             switch (icmp->type) {
                 case ICMP6_ECHO_REQUEST:
                 case ICMP6_ECHO_REPLY: {
-                    ctx->key.dst.icmp_id = icmp->fields.echo.id;
-                    ctx->key.src.icmp_id = icmp->fields.echo.id;
+                    ctx->key.dst.icmp_id = ntohs(icmp->fields.echo.id);
+                    ctx->key.src.icmp_id = ntohs(icmp->fields.echo.id);
                     ctx->key.src.icmp_type = icmp->type;
                     ctx->key.dst.icmp_type = OvsReverseIcmpType(icmp->type);
                     break;
