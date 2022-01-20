@@ -1226,14 +1226,6 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
         } else {
             OvsCtUpdateTuple(key, &entry->key);
         }
-    } else if (entry->key.dl_type == ntohs(ETH_TYPE_IPV6)) {
-        if (parent != NULL) {
-            OVS_ACQUIRE_SPIN_LOCK(&(parent->lock), irql);
-            OvsCtUpdateTuple(key, &parent->key);
-            OVS_RELEASE_SPIN_LOCK(&(parent->lock), irql);
-        } else {
-            OvsCtUpdateTuple(key, &entry->key);
-        }
     }
 
     if (entryCreated) {
