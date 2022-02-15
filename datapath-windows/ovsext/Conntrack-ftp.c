@@ -14,15 +14,21 @@
  * limitations under the License.
  */
 
+#include <string.h>
 #include "Conntrack.h"
 #include "PacketParser.h"
+#include "util.h"
 
 /* Eg: 227 Entering Passive Mode (a1,a2,a3,a4,p1,p2)*/
 #define FTP_PASV_RSP_PREFIX "227"
+#define FTP_EXTEND_PASV_RSP_PREFIX "229"
+#define FTP_EXTEND_ACTIVE_RSP_PREFIX "200"
 
 typedef enum FTP_TYPE {
     FTP_TYPE_PASV = 1,
-    FTP_TYPE_ACTIVE
+    FTP_TYPE_ACTIVE,
+    FTP_EXTEND_TYPE_PASV,
+    FTP_EXTEND_TYPE_ACTIVE
 } FTP_TYPE;
 
 static __inline UINT32
@@ -123,13 +129,13 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
                POVS_CT_ENTRY entry,
                BOOLEAN request)
 {
-    NDIS_STATUS status;
+    NDIS_STATUS status = NDIS_STATUS_SUCCESS;
     FTP_TYPE ftpType = 0;
     const char *buf;
     char temp[256] = { 0 };
     char ftpMsg[256] = { 0 };
-
     UINT32 len;
+    UINT8 nwProto;
     TCPHdr tcpStorage;
     const TCPHdr *tcp;
     tcp = OvsGetTcpHeader(curNbl, layers, &tcpStorage, &len);
@@ -156,6 +162,9 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
         if ((len >= 5) && (OvsStrncmp("PORT", ftpMsg, 4) == 0)) {
             ftpType = FTP_TYPE_ACTIVE;
             req = ftpMsg + 4;
+        } else if ((len >= 5) && (OvsStrncmp("EPRT", ftpMsg, 4) == 0)) {
+            ftpType = FTP_EXTEND_TYPE_ACTIVE;
+            req = ftpMsg + 4;
         }
     } else {
         if ((len >= 4) && (OvsStrncmp(FTP_PASV_RSP_PREFIX, ftpMsg, 3) == 0)) {
@@ -176,6 +185,26 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
                 /* PASV command without ( */
                 req = ftpMsg + 3;
             }
+        } else if ((len >= 4) && (OvsStrncmp(FTP_EXTEND_PASV_RSP_PREFIX, ftpMsg, 3) == 0)) {
+            ftpType = FTP_EXTEND_TYPE_PASV;
+            /* The ftp extended passive mode only contain port info, ip address
+             * is same with the network protocol used by control connection.
+             * 229 Entering Extended Passive Mode (|||port|)
+             *
+             * */
+            char *paren;
+            paren = strchr(ftpMsg, '|');
+            if (paren) {
+                req = paren + 3;
+            } else {
+                /* Not a valid EPSV packet. */
+                return NDIS_STATUS_INVALID_PACKET;
+            }
+
+            if (!(*req > '0' && * req < '9')) {
+                /* Not a valid port number. */
+                return NDIS_STATUS_INVALID_PACKET;
+            }
         }
     }
 
@@ -184,28 +213,90 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
         return NDIS_STATUS_SUCCESS;
     }
 
-    UINT32 arr[6] = {0};
-    status = OvsCtExtractNumbers(req, len, arr, 6, ',');
+    struct ct_addr clientIp = {0}, serverIp = {0};
+    UINT16 port = 0;
 
-    if (status != NDIS_STATUS_SUCCESS) {
-        return status;
+    if (ftpType == FTP_TYPE_ACTIVE || ftpType == FTP_TYPE_PASV) {
+        UINT32 arr[6] = {0};
+        status = OvsCtExtractNumbers(req, len, arr, 6, ',');
+
+        if (status != NDIS_STATUS_SUCCESS) {
+            return status;
+        }
+
+        UINT32 ip = ntohl((arr[0] << 24) | (arr[1] << 16) |
+                          (arr[2] << 8) | arr[3]);
+        port = ntohs(((arr[4] << 8) | arr[5]));
+
+        serverIp.ipv4 = ip;
+        clientIp.ipv4 = key->ipKey.nwDst;
+    } else {
+        if (ftpType == FTP_EXTEND_TYPE_ACTIVE) {
+            char *sep = "|";
+            char *word, *brkt;
+            int index = 0;
+
+            for (word = strtok_s(req, sep, &brkt);
+                 word;
+                 word = strtok_s(NULL, sep, &brkt))
+            {
+                if (index == 0 && *word == '1') { /* Not support */
+                    clientIp.sin_family = 1;
+                } else if (index == 0 && *word == '2') {/* Ipv6 address */
+                    clientIp.sin_family = 2;
+                }
+
+                if (index == 1) {
+                    if (clientIp.sin_family == 1) { /* Not support */
+
+                    } else if (clientIp.sin_family == 2) {
+                        OvsIpv6StringToAddress(word, &clientIp.ipv6);
+                    }
+                }
+
+                if (index == 2) {
+                    for (char *tmp = word; *tmp != '\0'; tmp++) {
+                        port = port * 10 + (*tmp - '0');
+                    }
+                }
+                index++;
+            }
+
+            if (index < 2) { /* Not valid packet due to less than three parameter */
+                return NDIS_STATUS_SUCCESS;
+            }
+            serverIp.ipv6 = key->ipv6Key.ipv6Src;
+
+        }
+
+        if (ftpType == FTP_EXTEND_TYPE_PASV) {
+            char *sep = "|";
+            char *word, *brkt;
+
+            for (word = strtok_s(req, sep, &brkt);
+                 word;
+                 word = strtok_s(NULL, sep, &brkt))
+            {
+                for (char *tmp = word; *tmp != '\0'; tmp++) {
+                    port = port * 10 + (*tmp - '0');
+                }
+            }
+            serverIp.ipv6 = key->ipv6Key.ipv6Dst;
+            clientIp.ipv6 = key->ipv6Key.ipv6Src;
+        }
     }
-
-    UINT32 ip = ntohl((arr[0] << 24) | (arr[1] << 16) |
-                      (arr[2] << 8) | arr[3]);
-    UINT16 port = ntohs(((arr[4] << 8) | arr[5]));
 
     switch (ftpType) {
     case FTP_TYPE_PASV:
         /* Ensure that the command states Server's IP address */
-        ASSERT(ip == key->ipKey.nwSrc);
+        nwProto = layers->isIPv6 ? key->ipv6Key.nwProto : key->ipKey.nwProto;
 
-        OvsCtRelatedEntryCreate(key->ipKey.nwProto,
+        OvsCtRelatedEntryCreate(nwProto,
                                 key->l2.dlType,
                                 /* Server's IP */
-                                ip,
+                                serverIp,
                                 /* Use intended client's IP */
-                                key->ipKey.nwDst,
+                                clientIp,
                                 /* Dynamic port opened on server */
                                 port,
                                 /* We don't know the client port */
@@ -217,9 +308,33 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
         OvsCtRelatedEntryCreate(key->ipKey.nwProto,
                                 key->l2.dlType,
                                 /* Server's default IP address */
-                                key->ipKey.nwDst,
+                                serverIp,
                                 /* Client's IP address */
-                                ip,
+                                clientIp,
+                                /* FTP Data Port is 20 */
+                                ntohs(IPPORT_FTP_DATA),
+                                /* Port opened up on Client */
+                                port,
+                                currentTime,
+                                entry);
+        break;
+    case FTP_EXTEND_TYPE_PASV:
+        OvsCtRelatedEntryCreate(key->ipv6Key.nwProto,
+                                key->l2.dlType,
+                                serverIp,
+                                clientIp,
+                                port,
+                                0,
+                                currentTime,
+                                entry);
+        break;
+    case FTP_EXTEND_TYPE_ACTIVE:
+        OvsCtRelatedEntryCreate(key->ipKey.nwProto,
+                                key->l2.dlType,
+                                /* Server's default IP address */
+                                serverIp,
+                                /* Client's IP address */
+                                clientIp,
                                 /* FTP Data Port is 20 */
                                 ntohs(IPPORT_FTP_DATA),
                                 /* Port opened up on Client */

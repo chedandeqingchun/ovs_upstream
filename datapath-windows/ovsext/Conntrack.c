@@ -728,11 +728,11 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
         }
 
         tcp = (TCPHdr *)((PCHAR)ipv6Hdr + layers->l4Offset);
+        ipv6Hdr = (IPv6Hdr *)((PCHAR)ipv6Hdr + layers->l3Offset);
         if (tcp->doff * 4 >= sizeof *tcp) {
             NdisMoveMemory(dest, tcp, sizeof(TCPHdr));
             ipv6ExtLength = layers->l4Offset - layers->l3Offset - sizeof(IPv6Hdr);
-            *tcpPayloadLen = (ipv6Hdr->payload_len - ipv6ExtLength - TCP_HDR_LEN(tcp));
-            OVS_LOG_TRACE("Tcp v6 payload length is %d.", *tcpPayloadLen);
+            *tcpPayloadLen = (ntohs(ipv6Hdr->payload_len) - ipv6ExtLength - TCP_HDR_LEN(tcp));
             return storage;
         }
     } else {//ipv4 packet
@@ -889,6 +889,13 @@ OvsDetectFtpPacket(OvsFlowKey *key) {
     return (key->ipKey.nwProto == IPPROTO_TCP &&
             (ntohs(key->ipKey.l4.tpDst) == IPPORT_FTP ||
             ntohs(key->ipKey.l4.tpSrc) == IPPORT_FTP));
+}
+
+static __inline BOOLEAN
+OvsDetectFtp6Packet(OvsFlowKey *key) {
+    return (key->ipv6Key.nwProto == IPPROTO_TCP &&
+            (ntohs(key->ipv6Key.l4.tpDst) == IPPORT_FTP ||
+             ntohs(key->ipv6Key.l4.tpSrc) == IPPORT_FTP));
 }
 
 /*
@@ -1109,6 +1116,8 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
     NDIS_STATUS status = NDIS_STATUS_SUCCESS;
     BOOLEAN triggerUpdateEvent = FALSE;
     BOOLEAN entryCreated = FALSE;
+    BOOLEAN isFtpPacket = FALSE;
+    BOOLEAN isFtpRequestDirection = FALSE;
     POVS_CT_ENTRY entry = NULL;
     POVS_CT_ENTRY parent = NULL;
     PNET_BUFFER_LIST curNbl = fwdCtx->curNbl;
@@ -1192,10 +1201,20 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
 
     OvsCtSetMarkLabel(key, entry, mark, labels, &triggerUpdateEvent);
 
-    if (OvsDetectFtpPacket(key)) {
+    if (layers->isIPv6) {
+        isFtpPacket = OvsDetectFtp6Packet(key);
+    } else {
+        isFtpPacket = OvsDetectFtpPacket(key);
+    }
+
+    if (isFtpPacket) {
+        if (ntohs(key->ipKey.l4.tpDst) == IPPORT_FTP) {
+            isFtpRequestDirection = TRUE;
+        }
+
         /* FTP parser will always be loaded */
         status = OvsCtHandleFtp(curNbl, key, layers, currentTime, entry,
-                                (ntohs(key->ipKey.l4.tpDst) == IPPORT_FTP));
+                                isFtpRequestDirection);
         if (status != NDIS_STATUS_SUCCESS) {
             OVS_LOG_ERROR("Error while parsing the FTP packet");
         }

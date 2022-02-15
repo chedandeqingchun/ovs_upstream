@@ -29,6 +29,7 @@
 #define OVS_DBG_MOD OVS_DBG_CONTRK
 
 struct ct_addr {
+    uint16_t  sin_family;
     union {
         ovs_be32 ipv4;
         struct in6_addr ipv6;
@@ -230,8 +231,8 @@ NTSTATUS OvsInitCtRelated(POVS_SWITCH_CONTEXT context);
 VOID OvsCleanupCtRelated(VOID);
 NDIS_STATUS OvsCtRelatedEntryCreate(UINT8 ipProto,
                                     UINT16 dl_type,
-                                    UINT32 serverIp,
-                                    UINT32 clientIp,
+                                    struct ct_addr serverIp,
+                                    struct ct_addr clientIp,
                                     UINT16 serverPort,
                                     UINT16 clientPort,
                                     UINT64 currentTime,
