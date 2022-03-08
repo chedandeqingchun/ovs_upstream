@@ -155,8 +155,12 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
         return NDIS_STATUS_INVALID_PACKET;
     }
 
+    OVS_LOG_INFO("+OvsCtHandleFtp liudejing, length is %d.", len);
+
     OvsStrlcpy((char *)ftpMsg, (char *)buf, min(len, sizeof(ftpMsg)));
     char *req = NULL;
+
+    OVS_LOG_INFO("+OvsCtHandleFtp ftp msg is %s.", ftpMsg);
 
     if (request) {
         if ((len >= 5) && (OvsStrncmp("PORT", ftpMsg, 4) == 0)) {
@@ -208,10 +212,15 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
         }
     }
 
+    OVS_LOG_INFO("+OvsCtHandleFtp liudejing + 1");
+
     if (req == NULL) {
         /* Not a PORT/PASV control packet */
+        OVS_LOG_INFO("Return due to no a valid packet");
         return NDIS_STATUS_SUCCESS;
     }
+
+    OVS_LOG_INFO("+OvsCtHandleFtp liudejing + 1.1");
 
     struct ct_addr clientIp = {0}, serverIp = {0};
     UINT16 port = 0;
@@ -285,6 +294,8 @@ OvsCtHandleFtp(PNET_BUFFER_LIST curNbl,
             clientIp.ipv6 = key->ipv6Key.ipv6Src;
         }
     }
+
+    OVS_LOG_INFO("+OvsCtHandleFtp liudejing + 2, ftp type is %d.", ftpType);
 
     switch (ftpType) {
     case FTP_TYPE_PASV:

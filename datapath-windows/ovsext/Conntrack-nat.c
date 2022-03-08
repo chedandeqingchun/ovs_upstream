@@ -42,12 +42,9 @@ OvsHashNatKey(const OVS_CT_KEY *key)
 static __inline BOOLEAN
 OvsNatKeyAreSame(const OVS_CT_KEY *key1, const OVS_CT_KEY *key2)
 {
-    // XXX: Compare IPv6 key as well
 #define FIELD_COMPARE(field) \
     if (key1->field != key2->field) return FALSE
 
-    FIELD_COMPARE(src.addr.ipv4_aligned);
-    FIELD_COMPARE(dst.addr.ipv4_aligned);
     FIELD_COMPARE(src.port);
     FIELD_COMPARE(dst.port);
     FIELD_COMPARE(zone);
@@ -56,6 +53,15 @@ OvsNatKeyAreSame(const OVS_CT_KEY *key1, const OVS_CT_KEY *key2)
     FIELD_COMPARE(dst.icmp_type);
     FIELD_COMPARE(src.icmp_code);
     FIELD_COMPARE(dst.icmp_code);
+
+    if (memcmp(&(key1->src.addr), &(key2->src.addr), sizeof(struct ct_addr))) {
+        return FALSE;
+    }
+
+    if (memcmp(&(key1->dst.addr), &(key2->dst.addr), sizeof(struct ct_addr))) {
+        return FALSE;
+    }
+
     return TRUE;
 #undef FIELD_COMPARE
 }
@@ -188,6 +194,7 @@ OvsNatPacket(OvsForwardingContext *ovsFwdCtx,
     BOOLEAN isSrcNat;
 
     if (!(natAction & (NAT_ACTION_SRC | NAT_ACTION_DST))) {
+        OVS_LOG_INFO("+Nat returned due to nat actions is %d.", natAction);
         return;
     }
     isSrcNat = (((natAction & NAT_ACTION_SRC) && !reverse) ||
@@ -215,18 +222,38 @@ OvsNatPacket(OvsForwardingContext *ovsFwdCtx,
         } else {
             key->ipKey.nwDst = endpoint->addr.ipv4_aligned;
         }
-    } else if (ctKey->dl_type == htons(ETH_TYPE_IPV6)){
-        // XXX: IPv6 packet not supported yet.
-        return;
+    } else if (ctKey->dl_type == htons(ETH_TYPE_IPV6)) {
+        OVS_LOG_INFO("Nat ipv6 packet, direction is %d.", !reverse ? 1 : 0);
+        OvsUpdateAddressAndPortForIpv6(ovsFwdCtx,
+                                      endpoint->addr.ipv6,
+                                      endpoint->port, isSrcNat,
+                                      !reverse);
+        if (isSrcNat) {
+            key->ipv6Key.ipv6Src = endpoint->addr.ipv6;
+        } else {
+            key->ipv6Key.ipv6Dst = endpoint->addr.ipv6;
+        }
     }
     if (natAction & (NAT_ACTION_SRC_PORT | NAT_ACTION_DST_PORT)) {
-        if (isSrcNat) {
-            if (key->ipKey.l4.tpSrc != 0) {
-                key->ipKey.l4.tpSrc = endpoint->port;
+        if (ctKey->dl_type == htons(ETH_TYPE_IPV4)) {
+            if (isSrcNat) {
+                if (key->ipKey.l4.tpSrc != 0) {
+                    key->ipKey.l4.tpSrc = endpoint->port;
+                }
+            } else {
+                if (key->ipKey.l4.tpDst != 0) {
+                    key->ipKey.l4.tpDst = endpoint->port;
+                }
             }
-        } else {
-            if (key->ipKey.l4.tpDst != 0) {
-                key->ipKey.l4.tpDst = endpoint->port;
+        } else if (ctKey->dl_type == htons(ETH_TYPE_IPV6)) {
+            if (isSrcNat) {
+                if (key->ipv6Key.l4.tpSrc != 0) {
+                    key->ipv6Key.l4.tpSrc = endpoint->port;
+                }
+            } else {
+                if (key->ipv6Key.l4.tpDst != 0) {
+                    key->ipv6Key.l4.tpDst = endpoint->port;
+                }
             }
         }
     }
@@ -326,10 +353,14 @@ OvsNatTranslateCtEntry(OVS_CT_ENTRY *entry)
         ctAddr.ipv4_aligned = htonl(
             ntohl(entry->natInfo.minAddr.ipv4_aligned) + addrIndex);
     } else {
-        // XXX: IPv6 not supported
-        return FALSE;
+        /** Current, only support nat single address**/
+        char src[130] = {0x00};
+        OvsIpv6AddressToString(entry->natInfo.minAddr.ipv6_aligned, src);
+        OVS_LOG_INFO("nat address is %s.", src);
+        ctAddr.ipv6_aligned = entry->natInfo.minAddr.ipv6_aligned;
     }
 
+    OVS_LOG_INFO("Translate ct entry.");
     port = firstPort;
     allPortsTried = FALSE;
     originalPortsTried = FALSE;
@@ -347,7 +378,9 @@ OvsNatTranslateCtEntry(OVS_CT_ENTRY *entry)
             }
         }
 
+        OVS_LOG_INFO("Translate ct entry+1.1.");
         OVS_NAT_ENTRY *natEntry = OvsNatLookup(&entry->rev_key, TRUE);
+        OVS_LOG_INFO("Translate ct entry+1.2.");
 
         if (!natEntry) {
             natEntry = OvsAllocateMemoryWithTag(sizeof(*natEntry),
@@ -355,14 +388,19 @@ OvsNatTranslateCtEntry(OVS_CT_ENTRY *entry)
             if (!natEntry) {
                return FALSE;
             }
+
+            OVS_LOG_INFO("Add new nat key before");
             memcpy(&natEntry->key, &entry->key,
                    sizeof natEntry->key);
             memcpy(&natEntry->value, &entry->rev_key,
                    sizeof natEntry->value);
             natEntry->ctEntry = entry;
+            OVS_LOG_INFO("Add new nat key end.");
             OvsNatAddEntry(natEntry);
+            OVS_LOG_INFO("Add new nat key to memory.");
             return TRUE;
         } else if (!allPortsTried) {
+            OVS_LOG_INFO("Ports Tried");
             if (minPort == maxPort) {
                 allPortsTried = TRUE;
             } else if (port == maxPort) {
@@ -374,13 +412,39 @@ OvsNatTranslateCtEntry(OVS_CT_ENTRY *entry)
                 allPortsTried = TRUE;
             }
         } else {
+            OVS_LOG_INFO("Added new ports.");
             if (memcmp(&ctAddr, &maxCtAddr, sizeof ctAddr)) {
                 if (entry->key.dl_type == htons(ETH_TYPE_IPV4)) {
                     ctAddr.ipv4_aligned = htonl(
                         ntohl(ctAddr.ipv4_aligned) + 1);
                 } else {
-                    // XXX: IPv6 not supported
-                    return FALSE;
+                    /** When all ports was used, return fails indicate exceed range. **/
+                    uint32_t addr[8] = {0};
+                    uint16_t *tmpAddr = (uint16_t *)&(ctAddr.ipv6_aligned);
+                    for (int m = 0; m < 8; m++) {
+                        addr[m] = tmpAddr[m];
+                    }
+
+                    uint16_t carry = 1, i = 8;
+                    while (carry && i)
+                    {
+                        addr[i-1] += carry;
+                        if (addr[i-1] > 0xffff || !addr[i-1])
+                        {
+                            carry = 1;
+                            addr[i-1] &= 0xffff;
+                        } else carry = 0;
+                        i--;
+                    }
+
+                    if (carry) {
+                        OVS_LOG_INFO("Ipv6 address incremented overflow.");
+                        return FALSE;
+                    }
+
+                    for (int m = 0; m < 8; m++) {
+                        tmpAddr[m] = (uint16_t)addr[m];
+                    }
                 }
             } else {
                 ctAddr = entry->natInfo.minAddr;
@@ -400,6 +464,8 @@ OvsNatTranslateCtEntry(OVS_CT_ENTRY *entry)
             allPortsTried = FALSE;
         }
     }
+
+    OVS_LOG_INFO("translate entry end.");
     return FALSE;
 }
 

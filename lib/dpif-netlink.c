@@ -5062,7 +5062,7 @@ dpif_netlink_flow_to_ofpbuf(const struct dpif_netlink_flow *flow,
     if (flow->clear) {
         nl_msg_put_flag(buf, OVS_FLOW_ATTR_CLEAR);
     }
-    if (flow->probe) {
+    if (flow->probe)
         nl_msg_put_flag(buf, OVS_FLOW_ATTR_PROBE);
     }
 }

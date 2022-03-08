@@ -37,28 +37,64 @@ OvsExtractCtRelatedKeyHash(OVS_CT_KEY *key)
 static __inline BOOLEAN
 OvsCtRelatedKeyAreSame(OVS_CT_KEY incomingKey, OVS_CT_KEY entryKey)
 {
+    OVS_LOG_INFO("+OvsCtRelatedKeyAreSame");
     /* FTP PASV - Client initiates the connection from unknown port */
-    if ((incomingKey.dst.addr.ipv4 == entryKey.src.addr.ipv4) &&
+    if ((incomingKey.dl_type == entryKey.dl_type) &&
+        (incomingKey.dl_type == htons(ETH_TYPE_IPV4)) &&
+        (incomingKey.dst.addr.ipv4 == entryKey.src.addr.ipv4) &&
         (incomingKey.dst.port == entryKey.src.port) &&
         (incomingKey.src.addr.ipv4 == entryKey.dst.addr.ipv4) &&
-        (incomingKey.dl_type == entryKey.dl_type) &&
         (incomingKey.nw_proto == entryKey.nw_proto)) {
         return TRUE;
     }
+
+    OVS_LOG_INFO("incoming dl type is %d, enterkey dl type is %d.\n", incomingKey.dl_type, entryKey.dl_type);
+    char src[130] = {0x00};
+    char dst[130] = {0x00};
+    OvsIpv6AddressToString((incomingKey.dst.addr.ipv6), src);
+    OvsIpv6AddressToString((entryKey.dst.addr.ipv6), dst);
+    OVS_LOG_INFO("ipv6 address is %s<---->%s", src, dst);
+    OVS_LOG_INFO("incoming proto is %d, nw proto is %d.\n", incomingKey.nw_proto, entryKey.nw_proto);
+    OVS_LOG_INFO("nw proto is %d %d", incomingKey.nw_proto, entryKey.nw_proto);
+
+    if ((incomingKey.dl_type == entryKey.dl_type) &&
+        (incomingKey.dl_type == htons(ETH_TYPE_IPV6)) &&
+        memcmp(&(incomingKey.dst.addr.ipv6), &(entryKey.src.addr.ipv6),
+               sizeof(incomingKey.dst.addr.ipv6)) &&
+        (incomingKey.dst.port == entryKey.src.port) &&
+        memcmp(&(incomingKey.src.addr.ipv6), &(entryKey.dst.addr.ipv6),
+               sizeof(incomingKey.src.addr.ipv6)) &&
+        (incomingKey.nw_proto == entryKey.nw_proto)) {
+        return TRUE;
+    }
+    OVS_LOG_INFO("not same 1");
 
     /* FTP ACTIVE - Server initiates the connection */
     /* Some ftp server, such as pyftpdlib, may use random (>1024) data port
      * except 20. In this case, the incomingKey's src port is different with
      * entryKey's src port.
      */
-    if ((incomingKey.src.addr.ipv4 == entryKey.src.addr.ipv4) &&
+    if ((incomingKey.dl_type == entryKey.dl_type) &&
+        (incomingKey.dl_type == htons(ETH_TYPE_IPV4)) &&
+        (incomingKey.src.addr.ipv4 == entryKey.src.addr.ipv4) &&
         (incomingKey.dst.addr.ipv4 == entryKey.dst.addr.ipv4) &&
         (incomingKey.dst.port == entryKey.dst.port) &&
-        (incomingKey.dl_type == entryKey.dl_type) &&
         (incomingKey.nw_proto == entryKey.nw_proto)) {
         return TRUE;
     }
 
+    if ((incomingKey.dl_type == entryKey.dl_type) &&
+        (incomingKey.dl_type == htons(ETH_TYPE_IPV6)) &&
+        memcmp(&(incomingKey.src.addr.ipv6), &(entryKey.src.addr.ipv6),
+               sizeof(incomingKey.src.addr.ipv6)) &&
+        memcmp(&(incomingKey.dst.addr.ipv6), &(entryKey.dst.addr.ipv6),
+               sizeof(incomingKey.src.addr.ipv6)) &&
+        (incomingKey.dst.port == entryKey.dst.port) &&
+        (incomingKey.nw_proto == entryKey.nw_proto)) {
+        return TRUE;
+    }
+
+    OVS_LOG_INFO("not same 2");
     return FALSE;
 }
 
@@ -78,7 +114,10 @@ OvsCtRelatedLookup(OVS_CT_KEY key, UINT64 currentTime)
     POVS_CT_REL_ENTRY entry;
     LOCK_STATE_EX lockState;
 
+    OVS_LOG_TRACE("+In related lookup.\n");
+
     if (!ctTotalRelatedEntries) {
+        OVS_LOG_TRACE("+There is no related entry, returned.\n");
         return NULL;
     }
 
@@ -142,6 +181,7 @@ OvsCtRelatedEntryCreate(UINT8 ipProto,
 
     UINT32 hash = OvsExtractCtRelatedKeyHash(&entry->key);
 
+    OVS_LOG_INFO("I have created related entry.\n");
     NdisAcquireRWLockWrite(ovsCtRelatedLockObj, &lockState, 0);
     InsertHeadList(&ovsCtRelatedTable[hash & CT_HASH_TABLE_MASK],
                    &entry->link);

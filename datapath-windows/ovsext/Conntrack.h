@@ -29,13 +29,13 @@
 #define OVS_DBG_MOD OVS_DBG_CONTRK
 
 struct ct_addr {
-    uint16_t  sin_family;
     union {
         ovs_be32 ipv4;
         struct in6_addr ipv6;
         uint32_t ipv4_aligned;
         struct in6_addr ipv6_aligned;
     };
+    uint16_t  sin_family;
 };
 
 struct ct_endpoint {

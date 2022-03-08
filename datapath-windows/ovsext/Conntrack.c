@@ -284,17 +284,21 @@ OvsCtAddEntry(POVS_CT_ENTRY entry,
     NdisMoveMemory(&entry->rev_key, &ctx->key, sizeof(OVS_CT_KEY));
     OvsCtKeyReverse(&entry->rev_key);
 
+    OVS_LOG_INFO("+OvsCtAddEntry.");
     /* NatInfo is always initialized to be disabled, so that if NAT action
      * fails, we will not end up deleting an non-existent NAT entry.
      */
     if (natInfo == NULL) {
         entry->natInfo.natAction = NAT_ACTION_NONE;
     } else {
+        OVS_LOG_INFO("+OvsCtAddEntry, nat actions value is %d.", natInfo->natAction);
         if (OvsIsForwardNat(natInfo->natAction)) {
             entry->natInfo = *natInfo;
             if (!OvsNatTranslateCtEntry(entry)) {
+                OVS_LOG_INFO("+ Translate nat key fails");
                 return FALSE;
             }
+            OVS_LOG_INFO("Translate at key success");
             ctx->hash = OvsCtHashKey(&entry->key);
         } else {
             entry->natInfo.natAction = natInfo->natAction;
@@ -329,6 +333,8 @@ OvsCtEntryCreate(OvsForwardingContext *fwdCtx,
     UINT32 state = 0;
     POVS_CT_ENTRY parentEntry;
     PNET_BUFFER_LIST curNbl = fwdCtx->curNbl;
+
+    OVS_LOG_INFO("+ovs ct entry create.");
 
     *entryCreated = FALSE;
     state |= OVS_CS_F_NEW;
@@ -384,14 +390,19 @@ OvsCtEntryCreate(OvsForwardingContext *fwdCtx,
         break;
     }
 
+    OVS_LOG_INFO("ct entry, state is %d.", state);
+
     parentEntry = OvsCtRelatedLookup(ctx->key, currentTime);
     if (parentEntry != NULL && state != OVS_CS_F_INVALID) {
         state |= OVS_CS_F_RELATED;
+        OVS_LOG_TRACE("+Found related entry.\n");
     }
+
     if (state != OVS_CS_F_INVALID && commit) {
         if (entry) {
             entry->parent = parentEntry;
             if (OvsCtAddEntry(entry, ctx, natInfo, currentTime)) {
+                OVS_LOG_INFO("Add entry to the ct table.");
                 *entryCreated = TRUE;
             } else {
                 /* Unable to add entry to the list */
@@ -715,11 +726,7 @@ OvsGetTcpHeader(PNET_BUFFER_LIST nbl,
     VOID *dest = storage;
     uint16_t ipv6ExtLength = 0;
 
-    OVS_LOG_TRACE("Enter OvsGetTcpHeader, layer info is %x",
-                  layers->isIPv6);
-
     if (layers->isIPv6) {//ipv6 packet
-        OVS_LOG_TRACE("Is ipv6 packet");
         ipv6Hdr = NdisGetDataBuffer(NET_BUFFER_LIST_FIRST_NB(nbl),
                                     layers->l4Offset + sizeof(TCPHdr),
                                     NULL, 1, 0);
@@ -829,7 +836,29 @@ OvsCtSetupLookupCtx(OvsFlowKey *flowKey,
             case ICMP4_PARAM_PROB:
             case ICMP4_SOURCE_QUENCH:
             case ICMP4_REDIRECT: {
-                /* XXX Handle inner packet */
+                Ipv6Key ipv6Key;
+                OVS_PACKET_HDR_INFO layers;
+                OvsExtractLayers(curNbl, &layers);
+                layers.l3Offset = layers.l7Offset;
+                NDIS_STATUS status = OvsParseIPv6(curNbl, &ipv6Key, &layers);
+                if (status != NDIS_STATUS_SUCCESS) {
+                    return NDIS_STATUS_INVALID_PACKET;
+                }
+                ctx->key.src.addr.ipv6 = ipv6Key.ipv6Src;
+                ctx->key.dst.addr.ipv6 = ipv6Key.ipv6Dst;
+                ctx->key.nw_proto = ipv6Key.nwProto;
+                if (ipv6Key.nwProto == SOCKET_IPPROTO_TCP) {
+                    OvsParseTcp(curNbl, &(ipv6Key.l4), &layers);
+                }
+                else if (ipv6Key.nwProto == SOCKET_IPPROTO_UDP) {
+                    OvsParseUdp(curNbl, &(ipv6Key.l4), &layers);
+                }
+                else if (ipv6Key.nwProto == SOCKET_IPPROTO_SCTP) {
+                    OvsParseSctp(curNbl, &ipv6Key.l4, &layers);
+                }
+                ctx->key.src.port = ipv6Key.l4.tpSrc;
+                ctx->key.dst.port = ipv6Key.l4.tpDst;
+                OvsCtKeyReverse(&ctx->key);
                 ctx->related = TRUE;
                 break;
             }
@@ -958,9 +987,17 @@ OvsProcessConntrackEntry(OvsForwardingContext *fwdCtx,
             OvsCtEntryDelete(ctx->entry, TRUE);
             NdisReleaseRWLock(ovsCtBucketLock[bucketIdx], &lockStateTable);
             ctx->entry = NULL;
-            entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto, layers,
-                                     ctx, key, natInfo, commit, currentTime,
-                                     entryCreated);
+
+            if (layers->isIPv6) {
+                entry = OvsCtEntryCreate(fwdCtx, key->ipv6Key.nwProto, layers,
+                                         ctx, key, natInfo, commit, currentTime,
+                                         entryCreated);
+            } else {
+                entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto, layers,
+                                         ctx, key, natInfo, commit, currentTime,
+                                         entryCreated);
+            }
+
             if (!entry) {
                 return NULL;
             }
@@ -972,8 +1009,10 @@ OvsProcessConntrackEntry(OvsForwardingContext *fwdCtx,
     }
     if (entry) {
         NdisAcquireSpinLock(&(entry->lock));
-        if (key->ipKey.nwProto == IPPROTO_TCP) {
+        if ((layers->isIPv6 && key->ipv6Key.nwProto == IPPROTO_TCP) ||
+            (!(layers->isIPv6) && key->ipKey.nwProto == IPPROTO_TCP)) {
             /* Update the related bit if there is a parent */
+            OVS_LOG_TRACE("+In related Conntrack.\n");
             if (entry->parent) {
                 state |= OVS_CS_F_RELATED;
             } else {
@@ -1100,6 +1139,29 @@ OvsCtUpdateTuple(OvsFlowKey *key, OVS_CT_KEY *ctKey)
                                     htons(ctKey->src.icmp_code);
 }
 
+/*
+ * --------------------------------------------------------------------------
+ *  OvsCtUpdateTupleV6 name --
+ *     Update origin tuple for ipv6 packet.
+ * --------------------------------------------------------------------------
+ */
+static __inline void
+OvsCtUpdateTupleV6(OvsFlowKey *key, OVS_CT_KEY *ctKey)
+{
+    RtlCopyMemory(&key->ct.tuple_ipv6.ipv6_src, &ctKey->src.addr.ipv6_aligned, sizeof(key->ct.tuple_ipv6.ipv6_src));
+    RtlCopyMemory(&key->ct.tuple_ipv6.ipv6_dst, &ctKey->dst.addr.ipv6_aligned, sizeof(key->ct.tuple_ipv6.ipv6_dst));
+    key->ct.tuple_ipv6.ipv6_proto = ctKey->nw_proto;
+
+    /* Orig tuple Port is overloaded to take in ICMP-Type & Code */
+    /* This mimics the behavior in lib/conntrack.c*/
+    key->ct.tuple_ipv6.src_port = ctKey->nw_proto != IPPROTO_ICMPV6 ?
+                                  ctKey->src.port :
+                                  htons(ctKey->src.icmp_type);
+    key->ct.tuple_ipv6.dst_port = ctKey->nw_proto != IPPROTO_ICMPV6 ?
+                                  ctKey->dst.port :
+                                  htons(ctKey->src.icmp_code);
+}
+
 static __inline NDIS_STATUS
 OvsCtExecute_(OvsForwardingContext *fwdCtx,
               OvsFlowKey *key,
@@ -1129,8 +1191,17 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
     /* Retrieve the Conntrack Key related fields from packet */
     OvsCtSetupLookupCtx(key, zone, &ctx, curNbl, layers->l4Offset);
 
-    /* Lookup Conntrack entries for a matching entry */
+    /* Lookup onntrack entries for a matching entry */
     entry = OvsCtLookup(&ctx);
+
+    if (key->l2.dlType == htons(ETH_TYPE_IPV6)) {
+        char src[130] = {0x00};
+        char dst[130] = {0x00};
+        OvsIpv6AddressToString((key->ipv6Key.ipv6Src), src);
+        OvsIpv6AddressToString((key->ipv6Key.ipv6Dst), dst);
+        OVS_LOG_INFO("+CtExecute entry, %s:%d->%s:%d", src, ntohs(key->ipv6Key.l4.tpSrc),
+                     dst, ntohs(key->ipv6Key.l4.tpDst));
+    }
 
     /* Delete entry in reverse direction if 'force' is specified */
     if (force && ctx.reply && entry) {
@@ -1169,10 +1240,17 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
         }
         /* If no matching entry was found, create one and add New state */
         if (key->l2.dlType == htons(ETH_TYPE_IPV6)) {
+            char src[130] = {0x00};
+            char dst[130] = {0x00};
+            OvsIpv6AddressToString((key->ipv6Key.ipv6Src), src);
+            OvsIpv6AddressToString((key->ipv6Key.ipv6Dst), dst);
+            OVS_LOG_INFO("Create ipv6 ct entry, %s:%d->%s:%d", src, ntohs(key->ipv6Key.l4.tpSrc),
+                         dst, ntohs(key->ipv6Key.l4.tpDst));
             entry = OvsCtEntryCreate(fwdCtx, key->ipv6Key.nwProto,
                                      layers, &ctx,
                                      key, natInfo, commit, currentTime,
                                      &entryCreated);
+
         } else {
             entry = OvsCtEntryCreate(fwdCtx, key->ipKey.nwProto,
                                      layers, &ctx,
@@ -1195,6 +1273,7 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
     KIRQL irql = KeGetCurrentIrql();
     OVS_ACQUIRE_SPIN_LOCK(&(entry->lock), irql);
     if (natInfo->natAction != NAT_ACTION_NONE) {
+        OVS_LOG_INFO("+I am going into nat packet, nat action is %d.", entry->natInfo.natAction);
         OvsNatPacket(fwdCtx, entry, entry->natInfo.natAction,
                      key, ctx.reply);
     }
@@ -1245,6 +1324,14 @@ OvsCtExecute_(OvsForwardingContext *fwdCtx,
         } else {
             OvsCtUpdateTuple(key, &entry->key);
         }
+    } else if (entry->key.dl_type == ntohs(ETH_TYPE_IPV6)) {
+        if (parent != NULL) {
+            OVS_ACQUIRE_SPIN_LOCK(&(parent->lock), irql);
+            OvsCtUpdateTupleV6(key, &parent->key);
+            OVS_RELEASE_SPIN_LOCK(&(parent->lock), irql);
+        } else {
+            OvsCtUpdateTupleV6(key, &entry->key);
+        }
     }
 
     if (entryCreated) {
@@ -1283,7 +1370,9 @@ OvsExecuteConntrackAction(OvsForwardingContext *fwdCtx,
 
     memset(&natActionInfo, 0, sizeof natActionInfo);
     status = OvsDetectCtPacket(fwdCtx, key);
+    OVS_LOG_INFO("execute ct action");
     if (status != NDIS_STATUS_SUCCESS) {
+        OVS_LOG_INFO("Not a valid ct packet.");
         return status;
     }
 
@@ -1346,11 +1435,17 @@ OvsExecuteConntrackAction(OvsForwardingContext *fwdCtx,
                     case OVS_NAT_ATTR_IP_MIN:
                         memcpy(&natActionInfo.minAddr,
                                 NlAttrData(natAttr), NlAttrGetSize(natAttr));
+                        char src[130] = {0x00};
+                        OvsIpv6AddressToString(natActionInfo.minAddr.ipv6_aligned, src);
+                        OVS_LOG_INFO("Get nat min address is %s.", src);
                         hasMinIp = TRUE;
                         break;
                     case OVS_NAT_ATTR_IP_MAX:
                         memcpy(&natActionInfo.maxAddr,
                                 NlAttrData(natAttr), NlAttrGetSize(natAttr));
+                        char dst[130] = {0x00};
+                        OvsIpv6AddressToString(natActionInfo.maxAddr.ipv6_aligned, dst);
+                        OVS_LOG_INFO("Get nat max address is %s.", src);
                         hasMaxIp = TRUE;
                         break;
                     case OVS_NAT_ATTR_PROTO_MIN:
@@ -1588,6 +1683,8 @@ MapNlToCtTuple(POVS_MESSAGE msgIn, PNL_ATTR ctAttr,
     static const NL_POLICY ctTupleIpPolicy[] = {
         [CTA_IP_V4_SRC] = { .type = NL_A_BE32, .optional = TRUE },
         [CTA_IP_V4_DST] = { .type = NL_A_BE32, .optional = TRUE },
+        [CTA_IP_V6_SRC] = {.type = NL_A_BE32,.optional = TRUE },
+        [CTA_IP_V6_DST] = {.type = NL_A_BE32,.optional = TRUE },
     };
 
     static const NL_POLICY ctTupleProtoPolicy[] = {
@@ -1596,6 +1693,9 @@ MapNlToCtTuple(POVS_MESSAGE msgIn, PNL_ATTR ctAttr,
         [CTA_PROTO_DST_PORT] = { .type = NL_A_BE16, .optional = TRUE },
         [CTA_PROTO_ICMP_TYPE] = { .type = NL_A_U8, .optional = TRUE },
         [CTA_PROTO_ICMP_CODE] = { .type = NL_A_U8, .optional = TRUE },
+        [CTA_PROTO_ICMPV6_ID] = {.type = NL_A_BE16,.optional = TRUE },
+        [CTA_PROTO_ICMPV6_TYPE] = {.type = NL_A_U8,.optional = TRUE },
+        [CTA_PROTO_ICMPV6_CODE] = {.type = NL_A_U8,.optional = TRUE },
     };
 
     if (!ctAttr) {
@@ -1648,8 +1748,11 @@ MapNlToCtTuple(POVS_MESSAGE msgIn, PNL_ATTR ctAttr,
                         ctTupleProtoAttrs[CTA_PROTO_ICMP_CODE] ) {
                 ct_tuple->src_port = NlAttrGetU8(ctTupleProtoAttrs[CTA_PROTO_ICMP_TYPE]);
                 ct_tuple->dst_port = NlAttrGetU8(ctTupleProtoAttrs[CTA_PROTO_ICMP_CODE]);
+            } else if (ctTupleProtoAttrs[CTA_PROTO_ICMPV6_TYPE] &&
+                       ctTupleProtoAttrs[CTA_PROTO_ICMPV6_CODE] ) {
+                ct_tuple->src_port = NlAttrGetU8(ctTupleProtoAttrs[CTA_PROTO_ICMPV6_TYPE]);
+                ct_tuple->dst_port = NlAttrGetU8(ctTupleProtoAttrs[CTA_PROTO_ICMPV6_CODE]);
             }
-
         }
     }
 

@@ -6199,11 +6199,22 @@ odp_flow_key_from_flow__(const struct odp_flow_key_parms *parms,
             ct->ipv4_proto = data->ct_nw_proto;
         } else if (parms->support.ct_orig_tuple6
                    && flow->dl_type == htons(ETH_TYPE_IPV6)) {
-            struct ovs_key_ct_tuple_ipv6 *ct;
+
+            struct temp_ovs_key_ct_tuple_ipv6 {
+                struct in6_addr ipv6_src;
+                struct in6_addr ipv6_dst;
+                uint16_t src_port;
+                uint16_t dst_port;
+                uint8_t  ipv6_proto;
+                uint8_t  pad[3];
+            };
+
+            struct temp_ovs_key_ct_tuple_ipv6 *ct;
 
             /* 'struct ovs_key_ct_tuple_ipv6' has padding, clear it. */
             ct = nl_msg_put_unspec_zero(buf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6,
                                         sizeof *ct);
+            VLOG_INFO("ct tuple6 leng is %d.", sizeof *ct);
             ct->ipv6_src = data->ct_ipv6_src;
             ct->ipv6_dst = data->ct_ipv6_dst;
             ct->src_port = data->ct_tp_src;

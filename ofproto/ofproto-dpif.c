@@ -15,6 +15,7 @@
 
 #include <config.h>
 #include <errno.h>
+#include <windows.h>
 
 #include "bfd.h"
 #include "bond.h"

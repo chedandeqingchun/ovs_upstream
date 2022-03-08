@@ -184,6 +184,10 @@ const NL_POLICY nlFlowKeyPolicy[] = {
     [OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4] = {.type = NL_A_UNSPEC,
                                 .minLen = sizeof(struct ovs_key_ct_tuple_ipv4),
                                 .maxLen = sizeof(struct ovs_key_ct_tuple_ipv4),
+                                .optional = TRUE},
+    [OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6] = {.type = NL_A_UNSPEC,
+                                .minLen = OVS_TUPLE_IPV6,
+                                .maxLen = OVS_TUPLE_IPV6,
                                 .optional = TRUE}
 };
 const UINT32 nlFlowKeyPolicyLen = ARRAY_SIZE(nlFlowKeyPolicy);
@@ -328,6 +332,12 @@ OvsFlowNlCmdHandler(POVS_USER_PARAMS_CONTEXT usrParamsCtx,
     }
 
     if (flowAttrs[OVS_FLOW_ATTR_PROBE]) {
+        OVS_LOG_INFO("liudejing####will in probe feature.");
+    } else {
+        OVS_LOG_INFO("liudejing####flowAttrs is null, won't into it.");
+    }
+
+    if (flowAttrs[OVS_FLOW_ATTR_PROBE]) {
         rc = OvsProbeSupportedFeature(msgIn, flowAttrs[OVS_FLOW_ATTR_KEY]);
         if (rc != STATUS_SUCCESS) {
             nlError = NlMapStatusToNlErr(rc);
@@ -426,8 +436,10 @@ OvsFlowNlGetCmdHandler(POVS_USER_PARAMS_CONTEXT usrParamsCtx,
     NTSTATUS status = STATUS_SUCCESS;
 
     if (usrParamsCtx->devOp == OVS_TRANSACTION_DEV_OP) {
+        OVS_LOG_INFO("In _FlowNlGetCmdHandler");
         status = _FlowNlGetCmdHandler(usrParamsCtx, replyLen);
     } else {
+        OVS_LOG_INFO("In _FlowNlDumpCmdHandler ");
         status = _FlowNlDumpCmdHandler(usrParamsCtx, replyLen);
     }
 
@@ -660,6 +672,7 @@ _FlowNlDumpCmdHandler(POVS_USER_PARAMS_CONTEXT usrParamsCtx,
         dumpInput.position[0] = instance->dumpState.index[0];
         dumpInput.position[1] = instance->dumpState.index[1];
 
+        OVS_LOG_INFO("liudejing####In do dump info.");
         rc = OvsDoDumpFlows(&dumpInput, &dumpOutput, &temp);
         if (rc != STATUS_SUCCESS) {
             OVS_LOG_ERROR("OvsDoDumpFlows failed with rc: %d", rc);
@@ -674,8 +687,7 @@ _FlowNlDumpCmdHandler(POVS_USER_PARAMS_CONTEXT usrParamsCtx,
         if (!(dumpOutput.n)) {
             BOOLEAN ok;
 
-            OVS_LOG_INFO("Dump Done");
-
+            OVS_LOG_INFO("liudejing####In dump n.");
             nlMsgOutHdr = (PNL_MSG_HDR)(NlBufAt(&nlBuf, NlBufSize(&nlBuf), 0));
             ok = NlFillNlHdr(&nlBuf, NLMSG_DONE, NLM_F_MULTI,
                              nlMsgHdr->nlmsgSeq, nlMsgHdr->nlmsgPid);
@@ -696,6 +708,7 @@ _FlowNlDumpCmdHandler(POVS_USER_PARAMS_CONTEXT usrParamsCtx,
         } else {
             BOOLEAN ok;
 
+            OVS_LOG_INFO("liudejing####In netlink dump.");
             hdrOffset = NlBufSize(&nlBuf);
             nlMsgOutHdr = (PNL_MSG_HDR)(NlBufAt(&nlBuf, hdrOffset, 0));
 
@@ -758,6 +771,8 @@ static NTSTATUS
 _MapFlowInfoToNl(PNL_BUFFER nlBuf, OvsFlowInfo *flowInfo)
 {
     NTSTATUS rc;
+
+    OVS_LOG_INFO("liudejing####In _MapFlowInfoToNl");
 
     rc = MapFlowKeyToNlKey(nlBuf, &(flowInfo->key), OVS_FLOW_ATTR_KEY,
                            OVS_KEY_ATTR_TUNNEL);
@@ -921,6 +936,19 @@ MapFlowKeyToNlKey(PNL_BUFFER nlBuf,
                             sizeof(struct ovs_key_ct_tuple_ipv4))) {
         rc = STATUS_UNSUCCESSFUL;
         goto done;
+    }
+
+    struct in6_addr bla = { 0 };
+    OVS_LOG_INFO("liudejing#####Will in print tuple6");
+    if (memcmp(&flowKey->ct.tuple_ipv6.ipv6_src, &bla, sizeof (struct in6_addr)) ||
+        memcmp(&flowKey->ct.tuple_ipv6.ipv6_dst, &bla, sizeof(struct in6_addr))) {
+        OVS_LOG_INFO("liudejing#####Will print tuple6");
+        if (!NlMsgPutTailUnspec(nlBuf, OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6,
+                                (PCHAR)(&flowKey->ct.tuple_ipv6),
+                                sizeof(struct ovs_key_ct_tuple_ipv6))) {
+            rc = STATUS_UNSUCCESSFUL;
+            goto done;
+        }
     }
 
     if (flowKey->dpHash) {
@@ -1551,6 +1579,13 @@ _MapKeyAttrToFlowPut(PNL_ATTR *keyAttrs,
                        sizeof(struct ovs_key_ct_tuple_ipv4));
     }
 
+    if (keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]) {
+        const struct ovs_key_ct_tuple_ipv6 *tuple_ipv6;
+        tuple_ipv6 = NlAttrGet(keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]);
+        NdisMoveMemory(&destKey->ct.tuple_ipv6, tuple_ipv6,
+                       sizeof(struct ovs_key_ct_tuple_ipv6));
+    }
+
     /* ===== L2 headers ===== */
     if (keyAttrs[OVS_KEY_ATTR_IN_PORT]) {
         destKey->l2.inPort = NlAttrGetU32(keyAttrs[OVS_KEY_ATTR_IN_PORT]);
@@ -2106,6 +2141,13 @@ OvsGetFlowMetadata(OvsFlowKey *key,
                        sizeof(struct ovs_key_ct_tuple_ipv4));
     }
 
+    if (keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]) {
+        const struct ovs_key_ct_tuple_ipv6 *tuple_ipv6;
+        tuple_ipv6 = NlAttrGet(keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]);
+        NdisMoveMemory(&key->ct.tuple_ipv6, tuple_ipv6,
+                       sizeof(struct ovs_key_ct_tuple_ipv6));
+    }
+
     return status;
 }
 
@@ -2586,6 +2628,8 @@ FlowEqual(OvsFlow *srcFlow,
                     sizeof(struct ovs_key_ct_labels)) &&
             !memcmp(&srcFlow->key.ct.tuple_ipv4, &dstKey->ct.tuple_ipv4,
                     sizeof(struct ovs_key_ct_tuple_ipv4)) &&
+            !memcmp(&srcFlow->key.ct.tuple_ipv6, &dstKey->ct.tuple_ipv6,
+                    sizeof(struct ovs_key_ct_tuple_ipv6)) &&
             FlowMemoryEqual((UINT64 *)((UINT8 *)&srcFlow->key + offset),
                             (UINT64 *) dstStart,
                             size));
@@ -2698,11 +2742,19 @@ OvsLookupFlow(OVS_DATAPATH *datapath,
                                            0);
             *hash = OvsJhashWords((UINT32*)hash, 1, lblHash);
         }
-        if (key->ct.tuple_ipv4.ipv4_src) {
+        if (key->ct.tuple_ipv4.ipv4_proto) {
             UINT32 tupleHash = OvsJhashBytes(
                                 &key->ct.tuple_ipv4,
                                 sizeof(struct ovs_key_ct_tuple_ipv4),
                                 0);
+            *hash = OvsJhashWords((UINT32*)hash, 1, tupleHash);
+        }
+
+        if (key->ct.tuple_ipv6.ipv6_proto) {
+            UINT32 tupleHash = OvsJhashBytes(
+                    &key->ct.tuple_ipv6,
+                    sizeof(struct ovs_key_ct_tuple_ipv6),
+                    0);
             *hash = OvsJhashWords((UINT32*)hash, 1, tupleHash);
         }
     }
@@ -2880,7 +2932,9 @@ ReportFlowInfo(OvsFlow *flow,
     NdisMoveMemory(&info->key.ct.tuple_ipv4,
                    &flow->key.ct.tuple_ipv4,
                    sizeof(struct ovs_key_ct_tuple_ipv4));
-
+    NdisMoveMemory(&info->key.ct.tuple_ipv6,
+                   &flow->key.ct.tuple_ipv6,
+                   sizeof(struct ovs_key_ct_tuple_ipv6));
     return status;
 }
 
@@ -3186,6 +3240,8 @@ OvsProbeSupportedFeature(POVS_MESSAGE msgIn,
     NTSTATUS status = STATUS_SUCCESS;
     PNL_MSG_HDR nlMsgHdr = &(msgIn->nlMsg);
 
+    OVS_LOG_INFO("liudejing#####probe features.");
+
     UINT32 keyAttrOffset = (UINT32)((PCHAR)keyAttr - (PCHAR)nlMsgHdr);
     UINT32 encapOffset = 0;
     PNL_ATTR keyAttrs[__OVS_KEY_ATTR_MAX] = { NULL };
@@ -3200,6 +3256,12 @@ OvsProbeSupportedFeature(POVS_MESSAGE msgIn,
                       nlMsgHdr);
         status = STATUS_INVALID_PARAMETER;
         goto done;
+    }
+
+    for (int test = 0; test < ARRAY_SIZE(keyAttrs); test++) {
+        if (keyAttrs[test]) {
+            OVS_LOG_INFO("type parse is %d.", test);
+        }
     }
 
     if (keyAttrs[OVS_KEY_ATTR_ENCAP]) {
@@ -3234,6 +3296,7 @@ OvsProbeSupportedFeature(POVS_MESSAGE msgIn,
             status = STATUS_INVALID_PARAMETER;
         }
     } else if (keyAttrs[OVS_KEY_ATTR_RECIRC_ID]) {
+        OVS_LOG_INFO("Recird id");
         UINT32 recircId = NlAttrGetU32(keyAttrs[OVS_KEY_ATTR_RECIRC_ID]);
 
         if (!recircId) {
@@ -3241,24 +3304,28 @@ OvsProbeSupportedFeature(POVS_MESSAGE msgIn,
             status = STATUS_INVALID_PARAMETER;
         }
     } else if (keyAttrs[OVS_KEY_ATTR_CT_STATE]) {
+        OVS_LOG_INFO("Ct state");
         UINT32 state = NlAttrGetU32(keyAttrs[OVS_KEY_ATTR_CT_STATE]);
         if (!state) {
             status = STATUS_INVALID_PARAMETER;
             OVS_LOG_ERROR("Invalid state specified.");
         }
     } else if (keyAttrs[OVS_KEY_ATTR_CT_ZONE]) {
+        OVS_LOG_INFO("Ct zone");
         UINT16 zone = (NlAttrGetU16(keyAttrs[OVS_KEY_ATTR_CT_ZONE]));
         if (!zone) {
             OVS_LOG_ERROR("Invalid zone specified.");
             status = STATUS_INVALID_PARAMETER;
         }
     } else if (keyAttrs[OVS_KEY_ATTR_CT_MARK]) {
+        OVS_LOG_INFO("Ct mark");
         UINT32 mark = (NlAttrGetU32(keyAttrs[OVS_KEY_ATTR_CT_MARK]));
         if (!mark) {
             OVS_LOG_ERROR("Invalid ct mark specified.");
             status = STATUS_INVALID_PARAMETER;
         }
     } else if (keyAttrs[OVS_KEY_ATTR_CT_LABELS]) {
+        OVS_LOG_INFO("Ct label");
         const struct ovs_key_ct_labels *ct_labels;
         ct_labels = NlAttrGet(keyAttrs[OVS_KEY_ATTR_CT_LABELS]);
         if (!ct_labels->ct_labels) {
@@ -3266,10 +3333,19 @@ OvsProbeSupportedFeature(POVS_MESSAGE msgIn,
             status = STATUS_INVALID_PARAMETER;
         }
     } else if (keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4]) {
+        OVS_LOG_INFO("Ct tuple4");
         const struct ovs_key_ct_tuple_ipv4 *ct_tuple_ipv4;
         ct_tuple_ipv4 = NlAttrGet(keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV4]);
         if (!ct_tuple_ipv4) {
             OVS_LOG_ERROR("Invalid ct_tuple_ipv4.");
+            status = STATUS_INVALID_PARAMETER;
+        }
+    } else if (keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]) {
+        OVS_LOG_INFO("Ct tuple6");
+        const struct ovs_key_ct_tuple_ipv6 *ct_tuple_ipv6;
+        ct_tuple_ipv6 = NlAttrGet(keyAttrs[OVS_KEY_ATTR_CT_ORIG_TUPLE_IPV6]);
+        if (!ct_tuple_ipv6) {
+            OVS_LOG_ERROR("Invalid ct_tuple_ipv6.");
             status = STATUS_INVALID_PARAMETER;
         }
     } else {
